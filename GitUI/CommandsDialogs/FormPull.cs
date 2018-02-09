@@ -3,16 +3,18 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using GitCommands;
 using GitCommands.Config;
 using GitCommands.Repository;
+using GitCommands.Remote;
 using GitUI.Properties;
 using GitUI.Script;
 using GitUI.UserControls;
+using GitUIPluginInterfaces;
 using ResourceManager;
-using Settings = GitCommands.AppSettings;
 
 namespace GitUI.CommandsDialogs
 {
@@ -83,18 +85,23 @@ namespace GitUI.CommandsDialogs
         private readonly TranslationString _pruneBranchesCaption = new TranslationString("Pull was rejected");
         private readonly TranslationString _pruneBranchesMainInstruction = new TranslationString("Remote branch no longer exist");
         private readonly TranslationString _pruneBranchesBranch =
-            new TranslationString("Do you want deletes all stale remote-tracking branches?");
+            new TranslationString("Do you want to delete all stale remote-tracking branches?");
         private readonly TranslationString _pruneBranchesButtons = new TranslationString("Deletes stale branches|Cancel");
 
         private readonly TranslationString _pruneFromCaption = new TranslationString("Prune remote branches from {0}");
 
         private readonly TranslationString _hoverShowImageLabelText = new TranslationString("Hover to see scenario when fast forward is possible.");
+        private readonly TranslationString _formTitlePull = new TranslationString("Pull ({0})");
+        private readonly TranslationString _formTitleFetch = new TranslationString("Fetch ({0})");
         #endregion
 
         public bool ErrorOccurred { get; private set; }
-        private IList<GitRef> _heads;
+        private IList<IGitRef> _heads;
         private string _branch;
+        private bool _bInternalUpdate;
         private const string AllRemotes = "[ All ]";
+        private readonly IGitRemoteManager _remoteManager;
+        private readonly IFullPathResolver _fullPathResolver;
 
         private FormPull()
             : this(null, null, null)
@@ -106,17 +113,23 @@ namespace GitUI.CommandsDialogs
             InitializeComponent();
             Translate();
 
-            helpImageDisplayUserControl1.Visible = !Settings.DontShowHelpImages;
+            if (aCommands == null)
+            {
+                return;
+            }
+
+            helpImageDisplayUserControl1.Visible = !AppSettings.DontShowHelpImages;
             helpImageDisplayUserControl1.IsOnHoverShowImage2NoticeText = _hoverShowImageLabelText.Text;
 
-            if (aCommands != null)
-                Init(defaultRemote);
+            _remoteManager = new GitRemoteManager(Module);
+            Init(defaultRemote);
 
-            Merge.Checked = Settings.FormPullAction == Settings.PullAction.Merge;
-            Rebase.Checked = Settings.FormPullAction == Settings.PullAction.Rebase;
-            Fetch.Checked = Settings.FormPullAction == Settings.PullAction.Fetch;
+            Merge.Checked = AppSettings.FormPullAction == AppSettings.PullAction.Merge;
+            Rebase.Checked = AppSettings.FormPullAction == AppSettings.PullAction.Rebase;
+            Fetch.Checked = AppSettings.FormPullAction == AppSettings.PullAction.Fetch;
             localBranch.Enabled = Fetch.Checked;
-            AutoStash.Checked = Settings.AutoStash;
+            AutoStash.Checked = AppSettings.AutoStash;
+            Prune.Enabled = AppSettings.FormPullAction == AppSettings.PullAction.Merge || AppSettings.FormPullAction == AppSettings.PullAction.Fetch;
 
             ErrorOccurred = false;
 
@@ -126,49 +139,52 @@ namespace GitUI.CommandsDialogs
             }
 
             // If this repo is shallow, show an option to Unshallow
-            if(aCommands != null)
-            {
-                // Detect by presence of the shallow file, not 100% sure it's the best way, but it's created upon shallow cloning and removed upon unshallowing
-                bool isRepoShallow = File.Exists(Path.Combine(aCommands.Module.GetGitDirectory(), "shallow"));
-                if(isRepoShallow)
-                    Unshallow.Visible = true;
-            }
+            // Detect by presence of the shallow file, not 100% sure it's the best way, but it's created upon shallow cloning and removed upon unshallowing
+            bool isRepoShallow = File.Exists(aCommands.Module.ResolveGitInternalPath("shallow"));
+            if (isRepoShallow)
+                Unshallow.Visible = true;
+            _fullPathResolver = new FullPathResolver(() => Module.WorkingDir);
         }
+
 
         private void Init(string defaultRemote)
         {
-            UpdateRemotesList();
-
             _branch = Module.GetSelectedBranch();
-
-            string currentBranchRemote;
-            if (defaultRemote.IsNullOrEmpty())
-            {
-                currentBranchRemote = Module.GetSetting(string.Format("branch.{0}.remote", _branch));
-            }
-            else
-            {
-                currentBranchRemote = defaultRemote;
-            }
-
-            if (currentBranchRemote.IsNullOrEmpty() && _NO_TRANSLATE_Remotes.Items.Count >= 3)
-            {
-                IList<string> remotes = (IList<string>)_NO_TRANSLATE_Remotes.DataSource;
-                int i = remotes.IndexOf("origin");
-                _NO_TRANSLATE_Remotes.SelectedIndex = i >= 0 ? i : 1;
-            }
-            else
-                _NO_TRANSLATE_Remotes.Text = currentBranchRemote;
-            localBranch.Text = _branch;
+            BindRemotesDropDown(defaultRemote);
         }
 
-        private void UpdateRemotesList()
+        private void BindRemotesDropDown(string selectedRemoteName)
         {
-            IList<string> remotes = new List<string>(Module.GetRemotes());
-            remotes.Insert(0, AllRemotes);
-            _NO_TRANSLATE_Remotes.DataSource = remotes;
+            // refresh registered git remotes
+            var remotes = _remoteManager.LoadRemotes(false);
 
-            ComboBoxHelper.ResizeComboBoxDropDownWidth (_NO_TRANSLATE_Remotes, AppSettings.BranchDropDownMinWidth, AppSettings.BranchDropDownMaxWidth);
+            _NO_TRANSLATE_Remotes.Sorted = false;
+            _NO_TRANSLATE_Remotes.DataSource = new[] { new GitRemote { Name = AllRemotes } }.Union(remotes).ToList();
+            _NO_TRANSLATE_Remotes.DisplayMember = "Name";
+            _NO_TRANSLATE_Remotes.SelectedIndex = -1;
+            _NO_TRANSLATE_Remotes.ResizeComboBoxDropDownWidth(AppSettings.BranchDropDownMinWidth, AppSettings.BranchDropDownMaxWidth);
+
+            if (selectedRemoteName.IsNullOrEmpty())
+            {
+                selectedRemoteName = Module.GetSetting(string.Format(SettingKeyString.BranchRemote, _branch));
+            }
+
+            var currentBranchRemote = remotes.FirstOrDefault(x => x.Name.Equals(selectedRemoteName, StringComparison.OrdinalIgnoreCase));
+            if (currentBranchRemote != null)
+            {
+                _NO_TRANSLATE_Remotes.SelectedItem = currentBranchRemote;
+            }
+            else if (remotes.Any())
+            {
+                // we couldn't find the default assigned remote for the selected branch
+                // it is usually gets mapped via FormRemotes -> "default pull behavior" tab
+                // so pick the default user remote
+                _NO_TRANSLATE_Remotes.SelectedIndex = 1;
+            }
+            else
+            {
+                _NO_TRANSLATE_Remotes.SelectedIndex = 0;
+            }
         }
 
         public DialogResult PullAndShowDialogWhenFailed(IWin32Window owner)
@@ -185,7 +201,7 @@ namespace GitUI.CommandsDialogs
 
         private void MergetoolClick(object sender, EventArgs e)
         {
-            Module.RunExternalCmdShowConsole(Settings.GitCommand, "mergetool");
+            Module.RunExternalCmdShowConsole(AppSettings.GitCommand, "mergetool");
 
             if (MessageBox.Show(this, _allMergeConflictSolvedQuestion.Text, _allMergeConflictSolvedQuestionCaption.Text,
                                 MessageBoxButtons.YesNo) != DialogResult.Yes)
@@ -221,7 +237,7 @@ namespace GitUI.CommandsDialogs
                     // It only returns the heads that are already known to the repository. This
                     // doesn't return heads that are new on the server. This can be updated using
                     // update branch info in the manage remotes dialog.
-                    _heads = new List<GitRef>();
+                    _heads = new List<IGitRef>();
                     foreach (var head in Module.GetRefs(true, true))
                     {
                         if (!head.IsRemote ||
@@ -238,7 +254,7 @@ namespace GitUI.CommandsDialogs
             _heads.Insert(0, GitRef.NoHead(Module));
             Branches.DataSource = _heads;
 
-            ComboBoxHelper.ResizeComboBoxDropDownWidth (Branches, AppSettings.BranchDropDownMinWidth, AppSettings.BranchDropDownMaxWidth);
+            ComboBoxHelper.ResizeComboBoxDropDownWidth(Branches, AppSettings.BranchDropDownMinWidth, AppSettings.BranchDropDownMaxWidth);
 
             Cursor.Current = Cursors.Default;
         }
@@ -262,7 +278,7 @@ namespace GitUI.CommandsDialogs
 
         private bool InitModules()
         {
-            if (!File.Exists(Module.WorkingDir + ".gitmodules"))
+            if (!File.Exists(_fullPathResolver.Resolve(".gitmodules")))
                 return false;
             if (!IsSubmodulesInitialized())
             {
@@ -294,7 +310,7 @@ namespace GitUI.CommandsDialogs
             if (ErrorOccurred || Module.InTheMiddleOfAction())
                 return;
 
-            bool? messageBoxResult = Settings.AutoPopStashAfterPull;
+            bool? messageBoxResult = AppSettings.AutoPopStashAfterPull;
             if (messageBoxResult == null)
             {
                 DialogResult res = PSTaskDialog.cTaskDialog.MessageBox(
@@ -310,11 +326,11 @@ namespace GitUI.CommandsDialogs
                     PSTaskDialog.eSysIcons.Question);
                 messageBoxResult = (res == DialogResult.Yes);
                 if (PSTaskDialog.cTaskDialog.VerificationChecked)
-                    Settings.AutoPopStashAfterPull = messageBoxResult;
+                    AppSettings.AutoPopStashAfterPull = messageBoxResult;
             }
-            if ((bool) messageBoxResult)
+            if ((bool)messageBoxResult)
             {
-                UICommands.StashPop(this);
+                UICommands.StashPop(owner);
             }
         }
 
@@ -340,7 +356,7 @@ namespace GitUI.CommandsDialogs
                 switch (idx)
                 {
                     case 0:
-                        if (!UICommands.StartCheckoutBranch(owner, new[] {""}))
+                        if (!UICommands.StartCheckoutBranch(owner, new[] { "" }))
                             return DialogResult.Cancel;
                         break;
                     case -1:
@@ -406,7 +422,7 @@ namespace GitUI.CommandsDialogs
                 return false;
             }
 
-            if (!Fetch.Checked && Branches.Text == "*")
+            if (!Fetch.Checked && Branches.Text == @"*")
             {
                 MessageBox.Show(this, _fetchAllBranchesCanOnlyWithFetch.Text);
                 return false;
@@ -469,12 +485,12 @@ namespace GitUI.CommandsDialogs
         {
             if (Fetch.Checked)
             {
-                return new FormRemoteProcess(Module, Module.FetchCmd(source, curRemoteBranch, curLocalBranch, GetTagsArg(), Unshallow.Checked));
+                return new FormRemoteProcess(Module, Module.FetchCmd(source, curRemoteBranch, curLocalBranch, GetTagsArg(), Unshallow.Checked, Prune.Checked));
             }
 
             Debug.Assert(Merge.Checked || Rebase.Checked);
 
-            return new FormRemoteProcess(Module, Module.PullCmd(source, curRemoteBranch, curLocalBranch, Rebase.Checked, GetTagsArg(), Unshallow.Checked))
+            return new FormRemoteProcess(Module, Module.PullCmd(source, curRemoteBranch, Rebase.Checked, GetTagsArg(), Unshallow.Checked, Prune.Checked))
                        {
                            HandleOnExitCallback = HandlePullOnExit
                        };
@@ -541,7 +557,7 @@ namespace GitUI.CommandsDialogs
                 return true;
             }
 
-            var currentBranchRemote = new Lazy<string>(() => Module.GetSetting(string.Format("branch.{0}.remote", localBranch.Text)));
+            var currentBranchRemote = new Lazy<string>(() => Module.GetSetting(string.Format(SettingKeyString.BranchRemote, localBranch.Text)));
 
             if (_branch == localBranch.Text)
             {
@@ -645,13 +661,13 @@ namespace GitUI.CommandsDialogs
         private void UpdateSettingsDuringPull()
         {
             if (Merge.Checked)
-                Settings.FormPullAction = Settings.PullAction.Merge;
+                AppSettings.FormPullAction = AppSettings.PullAction.Merge;
             if (Rebase.Checked)
-                Settings.FormPullAction = Settings.PullAction.Rebase;
+                AppSettings.FormPullAction = AppSettings.PullAction.Rebase;
             if (Fetch.Checked)
-                Settings.FormPullAction = Settings.PullAction.Fetch;
+                AppSettings.FormPullAction = AppSettings.PullAction.Fetch;
 
-            Settings.AutoStash = AutoStash.Checked;
+            AppSettings.AutoStash = AutoStash.Checked;
         }
 
         private IEnumerable<string> GetSelectedRemotes()
@@ -664,11 +680,11 @@ namespace GitUI.CommandsDialogs
 
             if (IsPullAll())
             {
-                IEnumerable<string> remotes = (IEnumerable<string>)_NO_TRANSLATE_Remotes.DataSource;
+                IEnumerable<GitRemote> remotes = (IEnumerable<GitRemote>)_NO_TRANSLATE_Remotes.DataSource;
                 foreach (var r in remotes)
                 {
-                    if (!r.IsNullOrWhiteSpace() && !r.Equals(AllRemotes))
-                        yield return r;
+                    if (!r.Name.IsNullOrWhiteSpace() && !r.Name.Equals(AllRemotes))
+                        yield return r.Name;
                 }
             }
             else
@@ -685,9 +701,9 @@ namespace GitUI.CommandsDialogs
             if (!GitCommandHelpers.Plink())
                 return;
 
-            if (File.Exists(Settings.Pageant))
+            if (File.Exists(AppSettings.Pageant))
             {
-                HashSet<string> files = new HashSet<string>(PathUtil.CreatePathEqualityComparer());
+                HashSet<string> files = new HashSet<string>(new PathEqualityComparer());
                 foreach (var remote in GetSelectedRemotes())
                 {
                     var sshKeyFile = Module.GetPuttyKeyFileForRemote(remote);
@@ -707,13 +723,23 @@ namespace GitUI.CommandsDialogs
         {
             _NO_TRANSLATE_Remotes.Select();
 
-            Text = string.Format("Pull ({0})", Module.WorkingDir);
+            FillFormTitle();
         }
 
         private void FillPullSourceDropDown()
         {
+            string prevUrl = comboBoxPullSource.Text;
             comboBoxPullSource.DataSource = Repositories.RemoteRepositoryHistory.Repositories;
             comboBoxPullSource.DisplayMember = "Path";
+            comboBoxPullSource.Text = prevUrl;
+        }
+
+        private void FillFormTitle()
+        {
+            if (Fetch.Checked)
+                Text = string.Format(_formTitleFetch.Text, Module.WorkingDir);
+            else
+                Text = string.Format(_formTitlePull.Text, Module.WorkingDir);
         }
 
         private void StashClick(object sender, EventArgs e)
@@ -769,8 +795,6 @@ namespace GitUI.CommandsDialogs
             FillPullSourceDropDown();
         }
 
-        private bool _bInternalUpdate;
-
         private void AddRemoteClick(object sender, EventArgs e)
         {
             if (IsPullAll())
@@ -785,43 +809,50 @@ namespace GitUI.CommandsDialogs
 
             _bInternalUpdate = true;
             string origText = _NO_TRANSLATE_Remotes.Text;
-            UpdateRemotesList();
-            if (_NO_TRANSLATE_Remotes.Items.Contains(origText)) // else first item gets selected
-            {
-                _NO_TRANSLATE_Remotes.Text = origText;
-            }
+            BindRemotesDropDown(origText);
             _bInternalUpdate = false;
         }
 
         private void MergeCheckedChanged(object sender, EventArgs e)
         {
+            if (!Merge.Checked)
+                return;
             localBranch.Enabled = false;
             localBranch.Text = _branch;
             helpImageDisplayUserControl1.Image1 = Resources.HelpPullMerge;
             helpImageDisplayUserControl1.Image2 = Resources.HelpPullMergeFastForward;
             helpImageDisplayUserControl1.IsOnHoverShowImage2 = true;
             AllTags.Enabled = false;
+            Prune.Enabled = true;
             if (AllTags.Checked)
                 ReachableTags.Checked = true;
         }
 
         private void RebaseCheckedChanged(object sender, EventArgs e)
         {
+            if (!Rebase.Checked)
+                return;
             localBranch.Enabled = false;
             localBranch.Text = _branch;
             helpImageDisplayUserControl1.Image1 = Resources.HelpPullRebase;
             helpImageDisplayUserControl1.IsOnHoverShowImage2 = false;
             AllTags.Enabled = false;
+            Prune.Enabled = false;
             if (AllTags.Checked)
                 ReachableTags.Checked = true;
         }
 
         private void FetchCheckedChanged(object sender, EventArgs e)
         {
+            if (!Fetch.Checked)
+                return;
             localBranch.Enabled = true;
+            localBranch.Text = string.Empty;
             helpImageDisplayUserControl1.Image1 = Resources.HelpPullFetch;
             helpImageDisplayUserControl1.IsOnHoverShowImage2 = false;
             AllTags.Enabled = true;
+            Prune.Enabled = true;
+            FillFormTitle();
         }
 
         private void PullSourceValidating(object sender, CancelEventArgs e)
@@ -842,7 +873,7 @@ namespace GitUI.CommandsDialogs
             ResetRemoteHeads();
 
             // update the text box of the Remote Url combobox to show the URL of selected remote
-            comboBoxPullSource.Text = Module.GetPathSetting(
+            comboBoxPullSource.Text = Module.GetSetting(
                 string.Format(SettingKeyString.RemoteUrl, _NO_TRANSLATE_Remotes.Text));
 
             // update merge options radio buttons

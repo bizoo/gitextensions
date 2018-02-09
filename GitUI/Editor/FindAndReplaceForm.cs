@@ -114,6 +114,7 @@ namespace GitUI
             ReplaceMode = replaceMode;
 
             Owner = (Form) editor.TopLevelControl;
+            Location = new Point(Owner.Location.X + 100, Owner.Location.Y+100);
             Show();
 
             txtLookFor.SelectAll();
@@ -345,7 +346,7 @@ namespace GitUI
         }
     }
 
-    /// <summary>This class finds occurrances of a search string in a text 
+    /// <summary>This class finds occurrences of a search string in a text 
     /// editor's IDocument... it's like Find box without a GUI.</summary>
     public sealed class TextEditorSearcher : IDisposable
     {

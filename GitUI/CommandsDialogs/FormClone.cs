@@ -7,39 +7,28 @@ using System.Windows.Forms;
 using GitCommands;
 using GitCommands.Config;
 using GitCommands.Repository;
-
-using JetBrains.Annotations;
-using GitUI.UserControls;
-
+using GitUIPluginInterfaces;
 using ResourceManager;
 
 namespace GitUI.CommandsDialogs
 {
     public partial class FormClone : GitModuleForm
     {
-        private readonly TranslationString _infoNewRepositoryLocation =
-            new TranslationString("The repository will be cloned to a new directory located here:"  + Environment.NewLine +
-                                  "{0}");
-
-        private readonly TranslationString _infoDirectoryExists =
-            new TranslationString("(Directory already exists)");
-
-        private readonly TranslationString _infoDirectoryNew =
-            new TranslationString("(New directory)");
-
-        private readonly TranslationString _questionOpenRepo =
-            new TranslationString("The repository has been cloned successfully." + Environment.NewLine +
-                                  "Do you want to open the new repository \"{0}\" now?");
-
-        private readonly TranslationString _questionOpenRepoCaption =
-            new TranslationString("Open");
-
+        private readonly TranslationString _infoNewRepositoryLocation = new TranslationString("The repository will be cloned to a new directory located here:" + Environment.NewLine + "{0}");
+        private readonly TranslationString _infoDirectoryExists = new TranslationString("(Directory already exists)");
+        private readonly TranslationString _infoDirectoryNew = new TranslationString("(New directory)");
+        private readonly TranslationString _questionOpenRepo = new TranslationString("The repository has been cloned successfully." + Environment.NewLine + "Do you want to open the new repository \"{0}\" now?");
+        private readonly TranslationString _questionOpenRepoCaption = new TranslationString("Open");
         private readonly TranslationString _branchDefaultRemoteHead = new TranslationString("(default: remote HEAD)" /* Has a colon, so won't alias with any valid branch name */);
         private readonly TranslationString _branchNone = new TranslationString("(none: don't checkout after clone)" /* Has a colon, so won't alias with any valid branch name */);
+        private readonly TranslationString _errorDestinationNotSupplied = new TranslationString("You need to specify destination folder.");
+        private readonly TranslationString _errorDestinationNotRooted = new TranslationString("Destination folder must be an absolute path.");
+        private readonly TranslationString _errorCloneFailed = new TranslationString("Clone Failed");
 
         private bool openedFromProtocolHandler;
         private readonly string url;
         private EventHandler<GitModuleEventArgs> GitModuleChanged;
+        private string _puttySshKey;
         private readonly IList<string> _defaultBranchItems;
 
         // for translation only
@@ -56,7 +45,7 @@ namespace GitUI.CommandsDialogs
             Translate();
             this.openedFromProtocolHandler = openedFromProtocolHandler;
             this.url = url;
-            _defaultBranchItems = new[] {_branchDefaultRemoteHead.Text, _branchNone.Text};
+            _defaultBranchItems = new[] { _branchDefaultRemoteHead.Text, _branchNone.Text };
             _NO_TRANSLATE_Branches.DataSource = _defaultBranchItems;
         }
 
@@ -67,7 +56,7 @@ namespace GitUI.CommandsDialogs
 
             _NO_TRANSLATE_To.Text = AppSettings.DefaultCloneDestinationPath;
 
-            if (url.IsNotNullOrWhitespace())
+            if (CanBeGitURL(url) || GitModule.IsValidGitWorkingDir(url))
             {
                 _NO_TRANSLATE_From.Text = url;
             }
@@ -82,10 +71,7 @@ namespace GitUI.CommandsDialogs
                         string text = Clipboard.GetText(TextDataFormat.Text) ?? string.Empty;
 
                         // See if it's a valid URL.
-                        string lowerText = text.ToLowerInvariant();
-                        if (lowerText.StartsWith("http") ||
-                            lowerText.StartsWith("git") ||
-                            lowerText.StartsWith("ssh"))
+                        if (CanBeGitURL(text))
                         {
                             _NO_TRANSLATE_From.Text = text;
                         }
@@ -99,7 +85,7 @@ namespace GitUI.CommandsDialogs
                 //that the cloned repository is hosted on the same server
                 if (_NO_TRANSLATE_From.Text.IsNullOrWhiteSpace())
                 {
-                    var currentBranchRemote = Module.GetSetting(string.Format("branch.{0}.remote", Module.GetSelectedBranch()));
+                    var currentBranchRemote = Module.GetSetting(string.Format(SettingKeyString.BranchRemote, Module.GetSelectedBranch()));
                     if (currentBranchRemote.IsNullOrEmpty())
                     {
                         var remotes = Module.GetRemotes();
@@ -110,27 +96,52 @@ namespace GitUI.CommandsDialogs
                             currentBranchRemote = remotes.FirstOrDefault();
                     }
 
-                    string pushUrl = Module.GetPathSetting(string.Format(SettingKeyString.RemotePushUrl, currentBranchRemote));
+                    string pushUrl = Module.GetSetting(string.Format(SettingKeyString.RemotePushUrl, currentBranchRemote));
                     if (pushUrl.IsNullOrEmpty())
                     {
-                        pushUrl = Module.GetPathSetting(string.Format(SettingKeyString.RemoteUrl, currentBranchRemote));
+                        pushUrl = Module.GetSetting(string.Format(SettingKeyString.RemoteUrl, currentBranchRemote));
                     }
 
-
                     _NO_TRANSLATE_From.Text = pushUrl;
+
+                    try
+                    {
+                        // If the from directory is filled with the pushUrl from current working directory, set the destination directory to the parent
+                        if (pushUrl.IsNotNullOrWhitespace() && _NO_TRANSLATE_To.Text.IsNullOrWhiteSpace() && Module.WorkingDir.IsNotNullOrWhitespace())
+                            _NO_TRANSLATE_To.Text = Path.GetDirectoryName(Module.WorkingDir.TrimEnd(Path.DirectorySeparatorChar));
+
+                    }
+                    catch (Exception)
+                    {
+                        // Exceptions on setting the destination directory can be ingnored
+                    }
                 }
             }
 
-            try
-            {
-                //if there is no destination directory, then use the parent directory of the current repository
-                if (_NO_TRANSLATE_To.Text.IsNullOrWhiteSpace() && Module.WorkingDir.IsNotNullOrWhitespace())
-                    _NO_TRANSLATE_To.Text = Path.GetDirectoryName(Module.WorkingDir.TrimEnd(Path.DirectorySeparatorChar));
-            }
-            catch (Exception)
-            { }
+            //if there is no destination directory, then use current working directory
+            if (_NO_TRANSLATE_To.Text.IsNullOrWhiteSpace() && Module.WorkingDir.IsNotNullOrWhitespace())
+                _NO_TRANSLATE_To.Text = Module.WorkingDir.TrimEnd(Path.DirectorySeparatorChar);
 
             FromTextUpdate(null, null);
+
+            cbLfs.Enabled = Module.HasLfsSupport();
+            if (!cbLfs.Enabled)
+                cbLfs.Checked = false;
+        }
+
+        private bool CanBeGitURL(string anURL)
+        {
+            if (anURL == null)
+            {
+                return false;
+            }
+
+            string anURLLowered = anURL.ToLowerInvariant();
+
+            return (anURLLowered.StartsWith("http") ||
+                anURLLowered.StartsWith("git") ||
+                anURLLowered.StartsWith("ssh"));
+
         }
 
         private void OkClick(object sender, EventArgs e)
@@ -140,9 +151,25 @@ namespace GitUI.CommandsDialogs
                 Cursor = Cursors.Default;
                 _branchListLoader.Cancel();
 
-                var dirTo = Path.Combine(_NO_TRANSLATE_To.Text, _NO_TRANSLATE_NewDirectory.Text);
+                // validate if destination path is supplied
+                var destination = _NO_TRANSLATE_To.Text;
+                if (string.IsNullOrWhiteSpace(destination))
+                {
+                    MessageBox.Show(this, _errorDestinationNotSupplied.Text, _errorCloneFailed.Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    _NO_TRANSLATE_To.Focus();
+                    return;
+                }
 
-                Repositories.AddMostRecentRepository(_NO_TRANSLATE_From.Text);
+                if (!Path.IsPathRooted(destination))
+                {
+                    MessageBox.Show(this, _errorDestinationNotRooted.Text, _errorCloneFailed.Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    _NO_TRANSLATE_To.Focus();
+                    return;
+                }
+
+                var dirTo = Path.Combine(destination, _NO_TRANSLATE_NewDirectory.Text);
+                // this will fail if the path is anyhow invalid
+                dirTo = new Uri(dirTo).LocalPath;
 
                 if (!Directory.Exists(dirTo))
                     Directory.CreateDirectory(dirTo);
@@ -150,7 +177,7 @@ namespace GitUI.CommandsDialogs
                 // Shallow clone params
                 int? depth = null;
                 bool? isSingleBranch = null;
-                if(!cbDownloadFullHistory.Checked)
+                if (!cbDownloadFullHistory.Checked)
                 {
                     depth = 1;
                     // Single branch considerations:
@@ -163,13 +190,13 @@ namespace GitUI.CommandsDialogs
 
                 // Branch name param
                 string branch = _NO_TRANSLATE_Branches.Text;
-                if(branch == _branchDefaultRemoteHead.Text)
+                if (branch == _branchDefaultRemoteHead.Text)
                     branch = "";
-                else if(branch == _branchNone.Text)
+                else if (branch == _branchNone.Text)
                     branch = null;
-                
+
                 var cloneCmd = GitCommandHelpers.CloneCmd(_NO_TRANSLATE_From.Text, dirTo,
-                            CentralRepository.Checked, cbIntializeAllSubmodules.Checked, branch, depth, isSingleBranch);
+                            CentralRepository.Checked, cbIntializeAllSubmodules.Checked, branch, depth, isSingleBranch, cbLfs.Checked);
                 using (var fromProcess = new FormRemoteProcess(Module, AppSettings.GitCommand, cloneCmd))
                 {
                     fromProcess.SetUrlTryingToConnect(_NO_TRANSLATE_From.Text);
@@ -180,6 +207,13 @@ namespace GitUI.CommandsDialogs
                 }
 
                 Repositories.AddMostRecentRepository(dirTo);
+
+                if (!String.IsNullOrEmpty(_puttySshKey))
+                {
+                    var clonedGitModule = new GitModule(dirTo);
+                    clonedGitModule.SetSetting(string.Format(SettingKeyString.RemotePuttySshKey, "origin"), _puttySshKey);
+                    clonedGitModule.LocalConfigFile.Save();
+                }
 
                 if (openedFromProtocolHandler && AskIfNewRepositoryShouldBeOpened(dirTo))
                 {
@@ -195,7 +229,7 @@ namespace GitUI.CommandsDialogs
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Exception: " + ex.Message, "Clone failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, "Exception: " + ex.Message, _errorCloneFailed.Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -254,7 +288,7 @@ namespace GitUI.CommandsDialogs
 
         private void LoadSshKeyClick(object sender, EventArgs e)
         {
-            BrowseForPrivateKey.BrowseAndLoad(this);
+            _puttySshKey = BrowseForPrivateKey.BrowseAndLoad(this);
         }
 
         private void FormCloneLoad(object sender, EventArgs e)
@@ -275,11 +309,11 @@ namespace GitUI.CommandsDialogs
 
             if (path != "")
             {
-              _NO_TRANSLATE_NewDirectory.Text = path;
+                _NO_TRANSLATE_NewDirectory.Text = path;
             }
 
             _NO_TRANSLATE_Branches.DataSource = _defaultBranchItems;
-            _NO_TRANSLATE_Branches.Select(0,0);   // Kill full selection on the default branch text
+            _NO_TRANSLATE_Branches.Select(0, 0);   // Kill full selection on the default branch text
 
             ToTextUpdate(sender, e);
         }
@@ -339,7 +373,7 @@ namespace GitUI.CommandsDialogs
 
         private readonly AsyncLoader _branchListLoader = new AsyncLoader();
 
-        private void UpdateBranches(RemoteActionResult<IList<GitRef>> branchList)
+        private void UpdateBranches(RemoteActionResult<IList<IGitRef>> branchList)
         {
             Cursor = Cursors.Default;
 

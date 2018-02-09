@@ -75,8 +75,11 @@ namespace GitUI.CommandsDialogs
 
             settingsTreeView.AddSettingsPage(SettingsPageBase.Create<StartPageSettingsPage>(this), gitExtPageRef);
 
-            var globalSettingsSettingsPage = SettingsPageBase.Create<GitConfigSettingsPage>(this);
-            settingsTreeView.AddSettingsPage(globalSettingsSettingsPage, gitExtPageRef);
+            var gitConfigSettingsSettingsPage = SettingsPageBase.Create<GitConfigSettingsPage>(this);
+            settingsTreeView.AddSettingsPage(gitConfigSettingsSettingsPage, gitExtPageRef);
+
+            var gitConfigAdvancedSettingsPage = SettingsPageBase.Create<GitConfigAdvancedSettingsPage>(this);
+            settingsTreeView.AddSettingsPage(gitConfigAdvancedSettingsPage, gitConfigSettingsSettingsPage.PageReference);
 
             var buildServerIntegrationSettingsPage = SettingsPageBase.Create<BuildServerIntegrationSettingsPage>(this);
             settingsTreeView.AddSettingsPage(buildServerIntegrationSettingsPage, gitExtPageRef);
@@ -96,8 +99,12 @@ namespace GitUI.CommandsDialogs
             SettingsPageReference advancedPageRef = AdvancedSettingsPage.GetPageReference();
 
             settingsTreeView.AddSettingsPage(SettingsPageBase.Create<DetailedSettingsPage>(this), gitExtPageRef);
+            var detailedSettingsPage = DetailedSettingsPage.GetPageReference();
 
             settingsTreeView.AddSettingsPage(SettingsPageBase.Create<ConfirmationsSettingsPage>(this), advancedPageRef);
+            settingsTreeView.AddSettingsPage(SettingsPageBase.Create<FormBrowseRepoSettingsPage>(this), detailedSettingsPage);
+            settingsTreeView.AddSettingsPage(SettingsPageBase.Create<DiffViewerSettingsPage>(this), detailedSettingsPage);
+            settingsTreeView.AddSettingsPage(SettingsPageBase.Create<ToolbarSettingsPage>(this), detailedSettingsPage);
 
             settingsTreeView.AddSettingsPage(new PluginsSettingsGroup(), null);
             SettingsPageReference pluginsPageRef = PluginsSettingsGroup.GetPageReference();
@@ -126,7 +133,7 @@ namespace GitUI.CommandsDialogs
 
             }
 
-            return result;            
+            return result;
         }
 
         private void FormSettings_Load(object sender, EventArgs e)
@@ -258,7 +265,7 @@ namespace GitUI.CommandsDialogs
 
         #region Hotkey commands
 
-        public const string HotkeySettingsName = "Scripts";
+        public static readonly string HotkeySettingsName = "Scripts";
 
         internal enum Commands
         {
@@ -301,6 +308,6 @@ namespace GitUI.CommandsDialogs
             LoadSettings();
         }
 
-        public CheckSettingsLogic CheckSettingsLogic { get { return _checkSettingsLogic; } } 
+        public CheckSettingsLogic CheckSettingsLogic { get { return _checkSettingsLogic; } }
     }
 }

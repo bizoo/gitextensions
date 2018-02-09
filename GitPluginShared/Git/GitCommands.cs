@@ -62,7 +62,7 @@ namespace GitPluginShared.Git
             };
         }
 
-        public static Process RunGitEx(string command, string filename)
+        public static Process RunGitEx(string command, string filename, string[] arguments = null)
         {
             if (!string.IsNullOrEmpty(filename))
             {
@@ -76,6 +76,11 @@ namespace GitPluginShared.Git
                 command += " \"" + filename + "\"";
             }
 
+            if (arguments != null && arguments.Length > 0)
+            {
+                command += " " + string.Join(" ", arguments);
+            }
+
             string path = GetGitExRegValue("InstallDir");
             string workDir = Path.GetDirectoryName(filename);
             ProcessStartInfo startInfo = CreateStartInfo(Path.Combine(path, "GitExtensions.exe"), command, workDir, Encoding.UTF8);
@@ -86,6 +91,9 @@ namespace GitPluginShared.Git
             }
             catch
             {
+                if (!File.Exists(Path.Combine(path, "GitExtensions.exe")))
+                    MessageBox.Show("This plugin requires Git Extensions to be installed. This application can be downloaded from http://gitextensions.github.io/");
+
                 return null;
             }
         }

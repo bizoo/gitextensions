@@ -5,6 +5,7 @@ using System.Linq;
 using System.Windows.Forms;
 using GitCommands;
 using GitCommands.Git;
+using GitCommands.Utils;
 using ResourceManager;
 
 namespace GitUI.CommandsDialogs
@@ -18,13 +19,18 @@ namespace GitUI.CommandsDialogs
         private readonly GitBranchNameOptions _gitBranchNameOptions = new GitBranchNameOptions(AppSettings.AutoNormaliseSymbol);
 
 
-        public FormCreateBranch(GitUICommands aCommands, GitRevision revision, IGitBranchNameNormaliser branchNameNormaliser = null)
+        public FormCreateBranch(GitUICommands aCommands, GitRevision revision)
             : base(aCommands)
         {
-            _branchNameNormaliser = branchNameNormaliser ?? new GitBranchNameNormaliser();
+            _branchNameNormaliser = new GitBranchNameNormaliser();
+            CheckoutAfterCreation = true;
+            UserAbleToChangeRevision = true;
+            CouldBeOrphan = true;
 
             InitializeComponent();
             Translate();
+
+            groupBox1.AutoSize = true;
 
             commitPickerSmallControl1.UICommandsSource = this;
             if (IsUICommandsInitialized)
@@ -33,6 +39,9 @@ namespace GitUI.CommandsDialogs
             }
         }
 
+        public bool CheckoutAfterCreation { get; set; }
+        public bool UserAbleToChangeRevision { get; set; }
+        public bool CouldBeOrphan { get; set; }
 
         private IEnumerable<T> FindControls<T>(Control control) where T : Control
         {
@@ -66,6 +75,10 @@ namespace GitUI.CommandsDialogs
                 label.AutoSize = true;
             }
 
+            chkbxCheckoutAfterCreate.Checked = CheckoutAfterCreation;
+            commitPickerSmallControl1.Enabled = UserAbleToChangeRevision;
+            groupBox1.Enabled = CouldBeOrphan;
+
             BranchNameTextBox.Focus();
         }
 
@@ -76,8 +89,14 @@ namespace GitUI.CommandsDialogs
             Ok.Focus();
 
             string commitGuid = commitPickerSmallControl1.SelectedCommitHash;
-            var branchName = BranchNameTextBox.Text.Trim();
+            if (commitGuid == null)
+            {
+                MessageBox.Show(this, _noRevisionSelected.Text, Text);
+                DialogResult = DialogResult.None;
+                return;
+            }
 
+            var branchName = BranchNameTextBox.Text.Trim();
             if (branchName.IsNullOrWhiteSpace())
             {
                 MessageBox.Show(_branchNameIsEmpty.Text, Text);
@@ -90,13 +109,10 @@ namespace GitUI.CommandsDialogs
                 DialogResult = DialogResult.None;
                 return;
             }
+
             try
             {
-                if (commitGuid == null)
-                {
-                    MessageBox.Show(this, _noRevisionSelected.Text, Text);
-                    return;
-                }
+                var originalHash = Module.GetCurrentCheckout();
 
                 string cmd;
                 if (Orphan.Checked)
@@ -115,7 +131,7 @@ namespace GitUI.CommandsDialogs
                     FormProcess.ShowDialog(this, cmd);
                 }
 
-                if (wasSuccessFul && chkbxCheckoutAfterCreate.Checked)
+                if (wasSuccessFul && chkbxCheckoutAfterCreate.Checked && !string.Equals(commitGuid, originalHash, StringComparison.OrdinalIgnoreCase))
                 {
                     UICommands.UpdateSubmodules(this);
                 }

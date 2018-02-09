@@ -16,9 +16,11 @@ namespace GitUIPluginInterfaces.BuildServerIntegration
 
         public string Id { get; set; }
         public DateTime StartDate { get; set; }
+        public long? Duration { get; set; }
         public BuildStatus Status { get; set; }
         public string Description { get; set; }
         public string[] CommitHashList { get; set; }
         public string Url { get; set; }
+        public bool ShowInBuildReportTab { get; set; } = true;
     }
 }

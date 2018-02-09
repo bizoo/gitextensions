@@ -12,20 +12,42 @@ namespace GitUI.CommandsDialogs
 {
     public sealed partial class FormAddToGitIgnore : GitModuleForm
     {
+        private readonly TranslationString _addToLocalExcludeTitle = new TranslationString("Add file(s) to .git/info/exclude");
         private readonly TranslationString _matchingFilesString = new TranslationString("{0} file(s) matched");
         private readonly TranslationString _updateStatusString = new TranslationString("Updating ...");
 
+        private readonly bool _localExclude;
         private readonly AsyncLoader _ignoredFilesLoader;
+        private readonly IFullPathResolver _fullPathResolver;
 
-        public FormAddToGitIgnore(GitUICommands aCommands, params string[] filePatterns)
+        public FormAddToGitIgnore(GitUICommands aCommands, bool localExclude, params string[] filePatterns)
             : base(aCommands)
         {
             InitializeComponent();
+            _localExclude = localExclude;
             _ignoredFilesLoader = new AsyncLoader();
             Translate();
 
+            if (localExclude)
+                Text = _addToLocalExcludeTitle.Text;
             if (filePatterns != null)
                 FilePattern.Text = string.Join(Environment.NewLine, filePatterns);
+            _fullPathResolver = new FullPathResolver(() => Module.WorkingDir);
+        }
+
+        private string ExcludeFile
+        {
+            get
+            {
+                if (!_localExclude)
+                {
+                    return _fullPathResolver.Resolve(".gitignore");
+                }
+                else
+                {
+                    return Path.Combine(Module.ResolveGitInternalPath("info"), "exclude");
+                }
+            }
         }
 
         private void AddToIgnoreClick(object sender, EventArgs e)
@@ -39,7 +61,7 @@ namespace GitUI.CommandsDialogs
 
             try
             {
-                var fileName = Module.WorkingDir + ".gitignore";
+                var fileName = ExcludeFile;
                 FileInfoExtensions.MakeFileTemporaryWritable(fileName, x =>
                 {
                     var gitIgnoreFileAddition = new StringBuilder();

@@ -1,4 +1,6 @@
 ﻿using System;
+using GitCommands.Remote;
+using System.Linq;
 
 namespace GitUI.UserControls
 {
@@ -11,7 +13,7 @@ namespace GitUI.UserControls
             AllowMultiselect = false;
         }
 
-        public string SelectedRemote { get { return (string)comboBoxRemotes.Text; } set { comboBoxRemotes.Text = value; } }
+        public string SelectedRemote { get { return comboBoxRemotes.Text; } set { comboBoxRemotes.Text = value; } }
 
         bool _allowMultiselect;
         public bool AllowMultiselect
@@ -35,7 +37,8 @@ namespace GitUI.UserControls
                 return;
             }
 
-            comboBoxRemotes.DataSource = Module.GetRemotes();
+            var remoteManager = new GitRemoteManager(Module);
+            comboBoxRemotes.DataSource = remoteManager.LoadRemotes(false).Select(x => x.Name).ToList();
         }
     }
 }

@@ -32,6 +32,8 @@ namespace GitUI.Editor
             TextEditor.ActiveTextAreaControl.TextArea.DoubleClick += ActiveTextAreaControlDoubleClick;
 
             _lineNumbersControl = new DiffViewerLineNumberCtrl(TextEditor.ActiveTextAreaControl.TextArea);
+
+            VRulerPosition = GitCommands.AppSettings.DiffVerticalRulerPosition;
         }
 
         public new Font Font
@@ -215,10 +217,14 @@ namespace GitUI.Editor
 
         public int ScrollPos
         {
-            get { return TextEditor.ActiveTextAreaControl.VScrollBar.Value; }
+            get { return TextEditor.ActiveTextAreaControl.VScrollBar?.Value ?? 0; }
             set
             {
                 var scrollBar = TextEditor.ActiveTextAreaControl.VScrollBar;
+                if (scrollBar == null) 
+                {
+                    return;
+                }
                 int max = scrollBar.Maximum - scrollBar.LargeChange;
                 max = Math.Max(max, scrollBar.Minimum);
                 scrollBar.Value = max > value ? value : max;
@@ -258,6 +264,18 @@ namespace GitUI.Editor
             set
             {
                 TextEditor.ShowTabs = value;
+            }
+        }
+
+        public int VRulerPosition
+        {
+            get
+            {
+                return TextEditor.VRulerRow;
+            }
+            set
+            {
+                TextEditor.VRulerRow = value;
             }
         }
 

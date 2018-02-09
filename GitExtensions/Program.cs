@@ -7,6 +7,7 @@ using GitCommands.Utils;
 using GitUI;
 using GitUI.CommandsDialogs.SettingsDialog;
 using GitUI.CommandsDialogs.SettingsDialog.Pages;
+using System.Threading.Tasks;
 
 namespace GitExtensions
 {
@@ -21,58 +22,51 @@ namespace GitExtensions
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            if (!EnvUtils.IsMonoRuntime())
+            try
             {
-                try
+                NBug.Settings.UIMode = NBug.Enums.UIMode.Full;
+
+                // Uncomment the following after testing to see that NBug is working as configured
+                NBug.Settings.ReleaseMode = true;
+                NBug.Settings.ExitApplicationImmediately = false;
+                NBug.Settings.WriteLogToDisk = false;
+                NBug.Settings.MaxQueuedReports = 10;
+                NBug.Settings.StopReportingAfter = 90;
+                NBug.Settings.SleepBeforeSend = 30;
+                NBug.Settings.StoragePath = NBug.Enums.StoragePath.WindowsTemp;
+
+                AppDomain.CurrentDomain.UnhandledException += NBug.Handler.UnhandledException;
+                Application.ThreadException += NBug.Handler.ThreadException;
+
+            }
+            catch (TypeInitializationException tie)
+            {
+                // is this exception caused by the configuration?
+                if (tie.InnerException != null
+                    && tie.InnerException.GetType()
+                        .IsSubclassOf(typeof(System.Configuration.ConfigurationException)))
                 {
-                    NBug.Settings.UIMode = NBug.Enums.UIMode.Full;
-
-                    // Uncomment the following after testing to see that NBug is working as configured
-                    NBug.Settings.ReleaseMode = true;
-                    NBug.Settings.ExitApplicationImmediately = false;
-                    NBug.Settings.WriteLogToDisk = false;
-                    NBug.Settings.MaxQueuedReports = 10;
-                    NBug.Settings.StopReportingAfter = 90;
-                    NBug.Settings.SleepBeforeSend = 30;
-                    NBug.Settings.StoragePath = NBug.Enums.StoragePath.WindowsTemp;
-
-                    AppDomain.CurrentDomain.UnhandledException += NBug.Handler.UnhandledException;
-                    Application.ThreadException += NBug.Handler.ThreadException;
-
-                }
-                catch (TypeInitializationException tie)
-                {
-                    // is this exception caused by the configuration?
-                    if (tie.InnerException != null
-                        && tie.InnerException.GetType()
-                            .IsSubclassOf(typeof(System.Configuration.ConfigurationException)))
-                    {
-                        HandleConfigurationException((System.Configuration.ConfigurationException)tie.InnerException);
-                    }
+                    HandleConfigurationException((System.Configuration.ConfigurationException)tie.InnerException);
                 }
             }
 
             string[] args = Environment.GetCommandLineArgs();
-            FormSplash.ShowSplash();
-            //Store here SynchronizationContext.Current, because later sometimes it can be null
-            //see http://stackoverflow.com/questions/11621372/synchronizationcontext-current-is-null-in-continuation-on-the-main-ui-thread
-            GitUIExtensions.UISynchronizationContext = SynchronizationContext.Current;
-            Application.DoEvents();
+
+            //This form created for obtain UI synchronization context only
+            using (new Form())
+            {
+                //Store here SynchronizationContext.Current, because later sometimes it can be null
+                //see http://stackoverflow.com/questions/11621372/synchronizationcontext-current-is-null-in-continuation-on-the-main-ui-thread
+                GitUIExtensions.UISynchronizationContext = SynchronizationContext.Current;
+                AsyncLoader.DefaultContinuationTaskScheduler = TaskScheduler.FromCurrentSynchronizationContext();
+            }
 
             AppSettings.LoadSettings();
             if (EnvUtils.RunningOnWindows())
             {
-              WebBrowserEmulationMode.SetBrowserFeatureControl();
-
-              //Quick HOME check:
-                FormSplash.SetAction("Checking home path...");
-                Application.DoEvents();
-
+                WebBrowserEmulationMode.SetBrowserFeatureControl();
                 FormFixHome.CheckHomePath();
             }
-            //Register plugins
-            FormSplash.SetAction("Loading plugins...");
-            Application.DoEvents();
 
             if (string.IsNullOrEmpty(AppSettings.Translation))
             {
@@ -89,9 +83,6 @@ namespace GitExtensions
                     || string.IsNullOrEmpty(AppSettings.GitCommandValue)
                     || !File.Exists(AppSettings.GitCommandValue)))
                 {
-                    FormSplash.SetAction("Checking settings...");
-                    Application.DoEvents();
-
                     GitUICommands uiCommands = new GitUICommands(string.Empty);
                     var commonLogic = new CommonLogic(uiCommands.Module);
                     var checkSettingsLogic = new CheckSettingsLogic(commonLogic);
@@ -112,8 +103,6 @@ namespace GitExtensions
             {
                 // TODO: remove catch-all
             }
-
-            FormSplash.HideSplash();
 
             if (EnvUtils.RunningOnWindows())
                 MouseWheelRedirector.Active = true;
@@ -137,13 +126,20 @@ namespace GitExtensions
             string workingDir = string.Empty;
             if (args.Length >= 3)
             {
-                if (Directory.Exists(args[2]))
-                    workingDir = GitModule.FindGitWorkingDir(args[2]);
+                //there is bug in .net
+                //while parsing command line arguments, it unescapes " incorectly
+                //https://github.com/gitextensions/gitextensions/issues/3489
+                string dirArg = args[2].TrimEnd('"');
+                if (Directory.Exists(dirArg))
+                    workingDir = GitModule.FindGitWorkingDir(dirArg);
                 else
                 {
-                    workingDir = Path.GetDirectoryName(args[2]);
+                    workingDir = Path.GetDirectoryName(dirArg);
                     workingDir = GitModule.FindGitWorkingDir(workingDir);
                 }
+
+                if (Directory.Exists(workingDir))
+                    workingDir = Path.GetFullPath(workingDir);
 
                 //Do not add this working directory to the recent repositories. It is a nice feature, but it
                 //also increases the startup time
@@ -173,6 +169,7 @@ namespace GitExtensions
         /// <param name="ce"></param>
         private static void HandleConfigurationException(System.Configuration.ConfigurationException ce)
         {
+            bool exceptionHandled = false;
             try
             {
                 // perhaps this should be checked for if it is null
@@ -219,11 +216,15 @@ namespace GitExtensions
                         string messageContent = String.Format("There is a problem with the application settings XML configuration file.{0}{0}The error message was: {1}{0}{0}Problems with configuration can usually be solved by deleting the configuration file.", Environment.NewLine, in3.Message);
                         MessageBox.Show(messageContent, "Configuration Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     }
+                    exceptionHandled = true;
                 }
             }
             finally // if we fail in this somehow at least this message might get somewhere
             {
-                System.Console.WriteLine("Configuration Error");
+                if (!exceptionHandled)
+                {
+                    MessageBox.Show(ce.ToString(), "Configuration Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
                 System.Environment.Exit(1);
             }
         }

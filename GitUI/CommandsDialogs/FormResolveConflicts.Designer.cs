@@ -1,4 +1,6 @@
-﻿namespace GitUI.CommandsDialogs
+﻿using GitCommands.Git;
+
+namespace GitUI.CommandsDialogs
 {
     partial class FormResolveConflicts
     {
@@ -77,18 +79,17 @@
             this.dateDataGridViewTextBoxColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.fileNameDataGridViewTextBoxColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.modeDataGridViewTextBoxColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.subItemsBindingSource = new System.Windows.Forms.BindingSource(this.components);
             this.tableLayoutPanel4 = new System.Windows.Forms.TableLayoutPanel();
             this.flowLayoutPanel1 = new System.Windows.Forms.FlowLayoutPanel();
             this.tableLayoutPanel5 = new System.Windows.Forms.TableLayoutPanel();
             this.gotoUserManualControl1 = new GitUI.UserControls.GotoUserManualControl();
+            this.progressBar = new System.Windows.Forms.ProgressBar();
             ((System.ComponentModel.ISupportInitialize)(this.ConflictedFiles)).BeginInit();
             this.ConflictedFilesContextMenu.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.gitItemBindingSource)).BeginInit();
             this.tableLayoutPanel1.SuspendLayout();
             this.tableLayoutPanel3.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.pictureBox1)).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)(this.subItemsBindingSource)).BeginInit();
             this.tableLayoutPanel4.SuspendLayout();
             this.flowLayoutPanel1.SuspendLayout();
             this.tableLayoutPanel5.SuspendLayout();
@@ -119,7 +120,6 @@
             this.ConflictedFiles.DataSource = this.gitItemBindingSource;
             this.ConflictedFiles.Dock = System.Windows.Forms.DockStyle.Fill;
             this.ConflictedFiles.Location = new System.Drawing.Point(3, 19);
-            this.ConflictedFiles.MultiSelect = false;
             this.ConflictedFiles.Name = "ConflictedFiles";
             this.ConflictedFiles.ReadOnly = true;
             this.ConflictedFiles.RowHeadersVisible = false;
@@ -301,7 +301,7 @@
             // 
             // gitItemBindingSource
             // 
-            this.gitItemBindingSource.DataSource = typeof(GitCommands.GitItem);
+            this.gitItemBindingSource.DataSource = typeof(GitItem);
             // 
             // tableLayoutPanel1
             // 
@@ -473,7 +473,7 @@
             this.Rescan.Name = "Rescan";
             this.Rescan.Size = new System.Drawing.Size(140, 25);
             this.Rescan.TabIndex = 5;
-            this.Rescan.Text = "Rescan mergeconflicts";
+            this.Rescan.Text = "Rescan merge conflicts";
             this.Rescan.UseVisualStyleBackColor = true;
             this.Rescan.Click += new System.EventHandler(this.Rescan_Click);
             // 
@@ -543,11 +543,6 @@
             this.modeDataGridViewTextBoxColumn.Name = "modeDataGridViewTextBoxColumn";
             this.modeDataGridViewTextBoxColumn.ReadOnly = true;
             // 
-            // subItemsBindingSource
-            // 
-            this.subItemsBindingSource.DataMember = "SubItems";
-            this.subItemsBindingSource.DataSource = this.gitItemBindingSource;
-            // 
             // tableLayoutPanel4
             // 
             this.tableLayoutPanel4.ColumnCount = 2;
@@ -574,6 +569,7 @@
             this.flowLayoutPanel1.Controls.Add(this.startMergetool);
             this.flowLayoutPanel1.Controls.Add(this.Rescan);
             this.flowLayoutPanel1.Controls.Add(this.Reset);
+            this.flowLayoutPanel1.Controls.Add(this.progressBar);
             this.flowLayoutPanel1.Dock = System.Windows.Forms.DockStyle.Fill;
             this.flowLayoutPanel1.FlowDirection = System.Windows.Forms.FlowDirection.TopDown;
             this.flowLayoutPanel1.Location = new System.Drawing.Point(470, 3);
@@ -581,6 +577,16 @@
             this.flowLayoutPanel1.Size = new System.Drawing.Size(146, 290);
             this.flowLayoutPanel1.TabIndex = 0;
             this.flowLayoutPanel1.WrapContents = false;
+            // 
+            // progressBar
+            // 
+            this.progressBar.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
+            | System.Windows.Forms.AnchorStyles.Right)));
+            this.progressBar.Location = new System.Drawing.Point(3, 127);
+            this.progressBar.Name = "progressBar";
+            this.progressBar.Size = new System.Drawing.Size(140, 24);
+            this.progressBar.TabIndex = 7;
+            this.progressBar.Visible = false;
             // 
             // tableLayoutPanel5
             // 
@@ -633,7 +639,6 @@
             this.tableLayoutPanel3.ResumeLayout(false);
             this.tableLayoutPanel3.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)(this.pictureBox1)).EndInit();
-            ((System.ComponentModel.ISupportInitialize)(this.subItemsBindingSource)).EndInit();
             this.tableLayoutPanel4.ResumeLayout(false);
             this.tableLayoutPanel4.PerformLayout();
             this.flowLayoutPanel1.ResumeLayout(false);
@@ -689,7 +694,6 @@
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel3;
         private System.Windows.Forms.Button merge;
         private System.Windows.Forms.PictureBox pictureBox1;
-        private System.Windows.Forms.BindingSource subItemsBindingSource;
         private System.Windows.Forms.ToolStripSeparator toolStripSeparator4;
         private System.Windows.Forms.ToolStripMenuItem fileHistoryToolStripMenuItem;
         private System.Windows.Forms.DataGridViewTextBoxColumn FileName;
@@ -698,5 +702,6 @@
         private System.Windows.Forms.FlowLayoutPanel flowLayoutPanel1;
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel5;
         private UserControls.GotoUserManualControl gotoUserManualControl1;
+        private System.Windows.Forms.ProgressBar progressBar;
     }
 }

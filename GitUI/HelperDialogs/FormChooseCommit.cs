@@ -22,10 +22,11 @@ namespace GitUI.HelperDialogs
             Translate();        
         }
 
-        public FormChooseCommit(GitUICommands aCommands, string preselectCommit)
+        public FormChooseCommit(GitUICommands aCommands, string preselectCommit, bool showArtificial = false)
             : this(aCommands)
         {
             revisionGrid.MultiSelect = false;
+            revisionGrid.ShowUncommitedChangesIfPossible = showArtificial && !revisionGrid.Module.IsBareRepository();
 
             if (!String.IsNullOrEmpty(preselectCommit))
             {
@@ -88,11 +89,11 @@ namespace GitUI.HelperDialogs
             }
             SelectedRevision = revisions[0];
 
-            flowLayoutPanelParents.Visible = SelectedRevision.ParentGuids.Length != 0;
+            flowLayoutPanelParents.Visible = SelectedRevision.HasParent;
 
             if(!flowLayoutPanelParents.Visible)
                 return;
-            _parents = SelectedRevision.ParentGuids.ToDictionary(p=> p.Substring(0, 10), p=> p);
+            _parents = SelectedRevision.ParentGuids.ToDictionary(p=> GitRevision.ToShortSha(p), p=> p);
             linkLabelParent.Text = _parents.Keys.ElementAt(0);
 
             linkLabelParent2.Visible = _parents.Count > 1;

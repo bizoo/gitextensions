@@ -9,28 +9,43 @@ namespace GitPluginShared
 {
     public static class PluginHelpers
     {
+        public const string GitCommandBarName = "GitExtensions";
+        // specify if captions of commands can be updated
+        // On VS2013 (at least) update captions of command on hidden toolbar lead to create doubles of all commands on toolbar 2 commits, 4, 8, 16 ...
+        public static bool AllowCaptionUpdate;
+
         public static bool ChangeCommandCaption(DTE2 application, string commandBarName, string tooltipText, string caption)
         {
+            if (!AllowCaptionUpdate)
+                return false;
+
             try
             {
                 var cmdBars = (CommandBars)application.CommandBars;
                 CommandBar commandBar = cmdBars[commandBarName];
-                var cbcc = commandBar.Controls.Cast<CommandBarButton>().ToArray();
-                foreach (var control in cbcc)
+                var btn = FindCommandBarButton(commandBar, tooltipText.Trim());
+                if (btn != null)
                 {
-                    if (control.TooltipText.Trim().Equals(tooltipText.Trim(), StringComparison.CurrentCultureIgnoreCase))
-                    {
-                        control.Caption = caption;
-                        control.Style = MsoButtonStyle.msoButtonIconAndCaption;
-                    }
+                    btn.Caption = caption;
+                    btn.Style = MsoButtonStyle.msoButtonIconAndCaption;
+                    return true;
                 }
-                return true;
+                return false;
             }
             catch (Exception)
             {
                 //ignore!
                 return false;
             }
+        }
+
+        private static CommandBarButton FindCommandBarButton(CommandBar commandBar, string tooltipText)
+        {
+            return commandBar.Controls
+                .Cast<CommandBarControl>()
+                .Where(control => (control.TooltipText.Trim().Equals(tooltipText)))
+                .Cast<CommandBarButton>()
+                .FirstOrDefault();
         }
 
         public static OutputWindowPane AquireOutputPane(DTE2 app, string name)

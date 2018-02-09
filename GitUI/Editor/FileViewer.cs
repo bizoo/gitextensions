@@ -13,6 +13,7 @@ using GitUI.Hotkey;
 using ICSharpCode.TextEditor.Util;
 using PatchApply;
 using GitCommands.Settings;
+using GitUI.CommandsDialogs.SettingsDialog.Pages;
 using GitUI.Editor.Diff;
 using ResourceManager;
 
@@ -25,12 +26,13 @@ namespace GitUI.Editor
         private int _currentScrollPos = -1;
         private bool _currentViewIsPatch;
         private readonly IFileViewer _internalFileViewer;
+        private readonly IFullPathResolver _fullPathResolver;
 
         public FileViewer()
         {
             TreatAllFilesAsText = false;
             ShowEntireFile = false;
-            NumberOfVisibleLines = 3;
+            NumberOfVisibleLines = AppSettings.NumberOfContextLines;
             InitializeComponent();
             Translate();
 
@@ -49,22 +51,48 @@ namespace GitUI.Editor
             _async.LoadingError +=
                 (sender, args) =>
                 {
-                    ResetForText(null);
-                    _internalFileViewer.SetText("Unsupported file: \n\n" + args.Exception.Message);
-                    if (TextLoaded != null)
-                        TextLoaded(this, null);
+                    if (!IsDisposed)
+                    {
+                        ResetForText(null);
+                        _internalFileViewer.SetText("Unsupported file: \n\n" + args.Exception.ToString());
+                        if (TextLoaded != null)
+                            TextLoaded(this, null);
+                    }
                 };
 
             IgnoreWhitespaceChanges = AppSettings.IgnoreWhitespaceChanges;
             ignoreWhiteSpaces.Checked = IgnoreWhitespaceChanges;
+            ignoreWhiteSpaces.Image = GitUI.Properties.Resources.ignore_whitespaces;
+            ignoreWhitespaceChangesToolStripMenuItem.Checked = IgnoreWhitespaceChanges;
+            ignoreWhitespaceChangesToolStripMenuItem.Image = ignoreWhiteSpaces.Image;
+
+            ignoreAllWhitespaces.Checked = AppSettings.IgnoreAllWhitespaceChanges;
+            ignoreAllWhitespaces.Image = GitUI.Properties.Resources.ignore_all_whitespaces;
+            ignoreAllWhitespaceChangesToolStripMenuItem.Checked = ignoreAllWhitespaces.Checked;
+            ignoreAllWhitespaceChangesToolStripMenuItem.Image = ignoreAllWhitespaces.Image;
+
+            ShowEntireFile = AppSettings.ShowEntireFile;
+            showEntireFileButton.Checked = ShowEntireFile;
+            showEntireFileToolStripMenuItem.Checked = ShowEntireFile;
+
+            showNonPrintChars.Checked = AppSettings.ShowNonPrintingChars;
+            showNonprintableCharactersToolStripMenuItem.Checked = AppSettings.ShowNonPrintingChars;
+            ToggleNonPrintingChars(AppSettings.ShowNonPrintingChars);
 
             IsReadOnly = true;
+            var encodingList = AppSettings.AvailableEncodings.Values.Select(e => e.EncodingName).ToList();
+            var defaultEncodingName = Encoding.Default.EncodingName;
 
-            this.encodingToolStripComboBox.Items.AddRange(new Object[]
-                                                    {
-                                                        "Default (" + Encoding.Default.HeaderName + ")","DOS852", "ASCII",
-                                                        "Unicode", "UTF7", "UTF8", "UTF32"
-                                                    });
+            for (int i = 0; i < encodingList.Count; i++)
+            {
+                if (string.Compare(encodingList[i], defaultEncodingName, true) == 0)
+                {
+                    encodingList[i] = "Default (" + Encoding.Default.HeaderName + ")";
+                    break;
+                }
+            }
+            encodingToolStripComboBox.Items.AddRange(encodingList.ToArray());
+
             _internalFileViewer.MouseMove += TextAreaMouseMove;
             _internalFileViewer.MouseLeave += TextAreaMouseLeave;
             _internalFileViewer.TextChanged += TextEditor_TextChanged;
@@ -77,17 +105,18 @@ namespace GitUI.Editor
             if (RunTime() && ContextMenuStrip == null)
                 ContextMenuStrip = contextMenu;
             contextMenu.Opening += ContextMenu_Opening;
+            _fullPathResolver = new FullPathResolver(() => Module.WorkingDir);
         }
 
         void FileViewer_GitUICommandsSourceSet(object sender, GitUICommandsSourceEventArgs e)
         {
-            UICommandsSource.GitUICommandsChanged += WorkingDirChanged;
-            WorkingDirChanged(UICommandsSource, null);
+            UICommandsSource.GitUICommandsChanged += UICommandsSourceChanged;
+            UICommandsSourceChanged(UICommandsSource, null);
         }
 
         protected override void DisposeUICommandsSource()
         {
-            UICommandsSource.GitUICommandsChanged -= WorkingDirChanged;
+            UICommandsSource.GitUICommandsChanged -= UICommandsSourceChanged;
             base.DisposeUICommandsSource();
         }
 
@@ -160,18 +189,34 @@ namespace GitUI.Editor
         }
 
         [Browsable(false)]
-        public byte[] FilePreabmle { get; private set; }
+        public byte[] FilePreamble { get; private set; }
 
-        private void WorkingDirChanged(object sender, GitUICommandsChangedEventArgs e)
+        private void UICommandsSourceChanged(object sender, GitUICommandsChangedEventArgs e)
         {
+            if(e?.OldCommands != null)
+                e.OldCommands.PostSettings -= UICommands_PostSettings;
+
+            var commandSource = sender as IGitUICommandsSource;
+            if( commandSource?.UICommands != null)
+                commandSource.UICommands.PostSettings += UICommands_PostSettings;
+
             this.Encoding = null;
         }
 
+        private void UICommands_PostSettings( object sender, GitUIPluginInterfaces.GitUIPostActionEventArgs e )
+        {
+            _internalFileViewer.VRulerPosition = AppSettings.DiffVerticalRulerPosition;
+        }
 
         protected override void OnRuntimeLoad(EventArgs e)
         {
-            this.Hotkeys = HotkeySettingsManager.LoadHotkeys(HotkeySettingsName);
+            ReloadHotkeys();
             Font = AppSettings.DiffFont;
+        }
+
+        public void ReloadHotkeys()
+        {
+            this.Hotkeys = HotkeySettingsManager.LoadHotkeys(HotkeySettingsName);
         }
 
         void ContextMenu_Opening(object sender, System.ComponentModel.CancelEventArgs e)
@@ -228,6 +273,7 @@ namespace GitUI.Editor
         protected virtual void OnRequestDiffView(EventArgs args)
         {
             var handler = RequestDiffView;
+
             if (handler != null)
             {
                 handler(this, args);
@@ -256,20 +302,8 @@ namespace GitUI.Editor
 
         private void UpdateEncodingCombo()
         {
-            if (this.Encoding.GetType() == typeof(ASCIIEncoding))
-                this.encodingToolStripComboBox.Text = "ASCII";
-            else if (this.Encoding.GetType() == typeof(UnicodeEncoding))
-                this.encodingToolStripComboBox.Text = "Unicode";
-            else if (this.Encoding.GetType() == typeof(UTF7Encoding))
-                this.encodingToolStripComboBox.Text = "UTF7";
-            else if (this.Encoding.GetType() == typeof(UTF8Encoding))
-                this.encodingToolStripComboBox.Text = "UTF8";
-            else if (this.Encoding.GetType() == typeof(UTF32Encoding))
-                this.encodingToolStripComboBox.Text = "UTF32";
-            else if (this.Encoding == Encoding.Default)
-                this.encodingToolStripComboBox.Text = "Default (" + Encoding.Default.HeaderName + ")";
-            else if (this.Encoding == Encoding.GetEncoding("CP852"))
-                this.encodingToolStripComboBox.Text = "DOS852";
+            if (Encoding != null)
+                encodingToolStripComboBox.Text = Encoding.EncodingName;
         }
 
         public event EventHandler<EventArgs> ExtraDiffArgumentsChanged;
@@ -285,10 +319,11 @@ namespace GitUI.Editor
             treatAllFilesAsTextToolStripMenuItem.Visible = visible;
             copyNewVersionToolStripMenuItem.Visible = visible;
             copyOldVersionToolStripMenuItem.Visible = visible;
-            cherrypickSelectedLinesToolStripMenuItem.Visible = visible && !isStaging_diff;
+            //TODO The following should not be enabled if this is afile and the file does not exist
+            cherrypickSelectedLinesToolStripMenuItem.Visible = visible && !isStaging_diff && !Module.IsBareRepository();
+            revertSelectedLinesToolStripMenuItem.Visible = visible && !isStaging_diff && !Module.IsBareRepository();
             copyPatchToolStripMenuItem.Visible = visible;
         }
-
 
         private void OnExtraDiffArgumentsChanged()
         {
@@ -299,8 +334,16 @@ namespace GitUI.Editor
         public string GetExtraDiffArguments()
         {
             var diffArguments = new StringBuilder();
-            if (IgnoreWhitespaceChanges)
-                diffArguments.Append(" --ignore-space-change");
+
+            if (ignoreAllWhitespaces.Checked)
+            {
+                diffArguments.Append(" --ignore-all-space");
+            }
+            else
+            {
+                if (IgnoreWhitespaceChanges)
+                    diffArguments.Append(" --ignore-space-change");
+            }
 
             if (ShowEntireFile)
                 diffArguments.AppendFormat(" --inter-hunk-context=9000 --unified=9000");
@@ -329,7 +372,6 @@ namespace GitUI.Editor
                 fileviewerToolbar != null)
                 fileviewerToolbar.Visible = false;
         }
-
 
         public void SaveCurrentScrollPos()
         {
@@ -442,12 +484,14 @@ namespace GitUI.Editor
 
         public void ViewGitItemRevision(string fileName, string guid)
         {
-            if (guid == GitRevision.UnstagedGuid) //working directory changes
+            if (guid == GitRevision.UnstagedGuid)
             {
+                //No blob exists for unstaged, present contents from file system
                 ViewFile(fileName);
             }
             else
             {
+                //Retrieve blob, same as GitItemStatus.TreeGuid
                 string blob = Module.GetFileBlobHash(fileName, guid);
                 ViewGitItem(fileName, blob);
             }
@@ -473,8 +517,10 @@ namespace GitUI.Editor
 
         private void ViewItem(string fileName, Func<Image> getImage, Func<string> getFileText, Func<string> getSubmoduleText)
         {
-            FilePreabmle = null;
-            string fullPath = Path.GetFullPath(Path.Combine(Module.WorkingDir, fileName));
+            FilePreamble = null;
+
+            string fullPath = Path.GetFullPath(_fullPathResolver.Resolve(fileName));
+
             if (fileName.EndsWith("/") || Directory.Exists(fullPath))
             {
                 if (GitModule.IsValidGitWorkingDir(fullPath))
@@ -503,11 +549,11 @@ namespace GitUI.Editor
                                     {
                                         PictureBox.SizeMode = PictureBoxSizeMode.CenterImage;
                                     }
-
                                 }
                                 PictureBox.Image = image;
                             });
             }
+            //Check binary from extension/attributes (a secondary check for file contents before display)
             else if (IsBinaryFile(fileName))
             {
                 ViewText(null, "Binary file: " + fileName);
@@ -517,7 +563,6 @@ namespace GitUI.Editor
                 _async.Load(getFileText, text => ViewText(fileName, text));
             }
         }
-
 
         private bool IsBinaryFile(string fileName)
         {
@@ -553,7 +598,7 @@ namespace GitUI.Editor
         {
             try
             {
-                using (Stream stream = File.OpenRead(Path.Combine(Module.WorkingDir, fileName)))
+                using (Stream stream = File.OpenRead(_fullPathResolver.Resolve(fileName)))
                 {
                     return CreateImage(fileName, stream);
                 }
@@ -585,18 +630,30 @@ namespace GitUI.Editor
         private string GetFileText(string fileName)
         {
             string path;
+
             if (File.Exists(fileName))
                 path = fileName;
             else
-                path = Path.Combine(Module.WorkingDir, fileName);
+                path = _fullPathResolver.Resolve(fileName);
 
             if (File.Exists(path))
             {
-                using (var reader = new StreamReader(path, Module.FilesEncoding))
+                // StreamReader disposes of 'fileStream'.
+                // see: https://msdn.microsoft.com/library/ms182334.aspx
+                var fileStream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                try
                 {
-                    var content = reader.ReadToEnd();
-                    FilePreabmle = reader.CurrentEncoding.GetPreamble();
-                    return content;
+                    using (var reader = new StreamReader(fileStream, Module.FilesEncoding))
+                    {
+                        fileStream = null;
+                        var content = reader.ReadToEnd();
+                        FilePreamble = reader.CurrentEncoding.GetPreamble();
+                        return content;
+                    }
+                }
+                finally
+                {
+                    fileStream?.Dispose();
                 }
             }
             else
@@ -629,6 +686,7 @@ namespace GitUI.Editor
         }
 
         private bool patchHighlighting;
+
         private void ResetForDiff()
         {
             Reset(true, true);
@@ -664,7 +722,6 @@ namespace GitUI.Editor
             IgnoreWhitespaceChanges = !IgnoreWhitespaceChanges;
             ignoreWhiteSpaces.Checked = IgnoreWhitespaceChanges;
             ignoreWhitespaceChangesToolStripMenuItem.Checked = IgnoreWhitespaceChanges;
-
             AppSettings.IgnoreWhitespaceChanges = IgnoreWhitespaceChanges;
             OnExtraDiffArgumentsChanged();
         }
@@ -672,6 +729,7 @@ namespace GitUI.Editor
         private void IncreaseNumberOfLinesToolStripMenuItemClick(object sender, EventArgs e)
         {
             NumberOfVisibleLines++;
+            AppSettings.NumberOfContextLines = NumberOfVisibleLines;
             OnExtraDiffArgumentsChanged();
         }
 
@@ -681,15 +739,16 @@ namespace GitUI.Editor
                 NumberOfVisibleLines--;
             else
                 NumberOfVisibleLines = 0;
+            AppSettings.NumberOfContextLines = NumberOfVisibleLines;
             OnExtraDiffArgumentsChanged();
         }
 
         private void ShowEntireFileToolStripMenuItemClick(object sender, EventArgs e)
         {
-            showEntireFileToolStripMenuItem.Checked = !showEntireFileToolStripMenuItem.Checked;
-            showEntireFileButton.Checked = showEntireFileToolStripMenuItem.Checked;
-
-            ShowEntireFile = showEntireFileToolStripMenuItem.Checked;
+            ShowEntireFile = !ShowEntireFile;
+            showEntireFileButton.Checked = ShowEntireFile;
+            showEntireFileToolStripMenuItem.Checked = ShowEntireFile;
+            AppSettings.ShowEntireFile = ShowEntireFile;
             OnExtraDiffArgumentsChanged();
         }
 
@@ -703,6 +762,7 @@ namespace GitUI.Editor
         private void CopyToolStripMenuItemClick(object sender, EventArgs e)
         {
             string code = _internalFileViewer.GetSelectedText();
+
             if (string.IsNullOrEmpty(code))
                 return;
 
@@ -731,9 +791,10 @@ namespace GitUI.Editor
         private string RemovePrefix(string line)
         {
             var isCombinedDiff = DiffHighlightService.IsCombinedDiff(_internalFileViewer.GetText());
-            var specials = isCombinedDiff ? new[]{"  ", "++", "+ ", " +", "--", "- ", " -"}
-                : new[]{ " ", "-", "+" };
-            if(string.IsNullOrWhiteSpace(line))
+            var specials = isCombinedDiff ? new[] { "  ", "++", "+ ", " +", "--", "- ", " -" }
+                : new[] { " ", "-", "+" };
+
+            if (string.IsNullOrWhiteSpace(line))
             {
                 return line;
             }
@@ -747,6 +808,7 @@ namespace GitUI.Editor
         private void CopyPatchToolStripMenuItemClick(object sender, EventArgs e)
         {
             var selectedText = _internalFileViewer.GetSelectedText();
+
             if (!string.IsNullOrEmpty(selectedText))
             {
                 Clipboard.SetText(selectedText);
@@ -754,6 +816,7 @@ namespace GitUI.Editor
             }
 
             var text = _internalFileViewer.GetText();
+
             if (!text.IsNullOrEmpty())
                 Clipboard.SetText(text);
         }
@@ -801,6 +864,7 @@ namespace GitUI.Editor
         private void NextChangeButtonClick(object sender, EventArgs e)
         {
             Focus();
+
             var firstVisibleLine = _internalFileViewer.LineAtCaret;
             var totalNumberOfLines = _internalFileViewer.TotalNumberOfLines;
             var emptyLineCheck = false;
@@ -808,6 +872,7 @@ namespace GitUI.Editor
             for (var line = firstVisibleLine + 1; line < totalNumberOfLines; line++)
             {
                 var lineContent = _internalFileViewer.GetLineText(line);
+
                 if (IsDiffLine(_internalFileViewer.GetText(), lineContent))
                 {
                     if (emptyLineCheck)
@@ -830,13 +895,14 @@ namespace GitUI.Editor
         private static bool IsDiffLine(string wholeText, string lineContent)
         {
             var isCombinedDiff = DiffHighlightService.IsCombinedDiff(wholeText);
-            return lineContent.StartsWithAny(isCombinedDiff ? new[] {"+", "-", " +", " -"}
-                : new[] {"+", "-"});
+            return lineContent.StartsWithAny(isCombinedDiff ? new[] { "+", "-", " +", " -" }
+                : new[] { "+", "-" });
         }
 
         private void PreviousChangeButtonClick(object sender, EventArgs e)
         {
             Focus();
+
             var firstVisibleLine = _internalFileViewer.LineAtCaret;
             var emptyLineCheck = false;
             //go to the top of change block
@@ -847,6 +913,7 @@ namespace GitUI.Editor
             for (var line = firstVisibleLine; line > 0; line--)
             {
                 var lineContent = _internalFileViewer.GetLineText(line);
+
                 if (lineContent.StartsWithAny(new string[] { "+", "-" })
                     && !lineContent.StartsWithAny(new string[] { "++", "--" }))
                 {
@@ -892,9 +959,15 @@ namespace GitUI.Editor
             showNonprintableCharactersToolStripMenuItem.Checked = !showNonprintableCharactersToolStripMenuItem.Checked;
             showNonPrintChars.Checked = showNonprintableCharactersToolStripMenuItem.Checked;
 
-            _internalFileViewer.ShowEOLMarkers = showNonprintableCharactersToolStripMenuItem.Checked;
-            _internalFileViewer.ShowSpaces = showNonprintableCharactersToolStripMenuItem.Checked;
-            _internalFileViewer.ShowTabs = showNonprintableCharactersToolStripMenuItem.Checked;
+            ToggleNonPrintingChars(show: showNonprintableCharactersToolStripMenuItem.Checked);
+            AppSettings.ShowNonPrintingChars = showNonPrintChars.Checked;
+        }
+
+        private void ToggleNonPrintingChars(bool show)
+        {
+            _internalFileViewer.ShowEOLMarkers = show;
+            _internalFileViewer.ShowSpaces = show;
+            _internalFileViewer.ShowTabs = show;
         }
 
         private void FindToolStripMenuItemClick(object sender, EventArgs e)
@@ -909,7 +982,7 @@ namespace GitUI.Editor
 
         #region Hotkey commands
 
-        public const string HotkeySettingsName = "FileViewer";
+        public static readonly string HotkeySettingsName = "FileViewer";
 
         internal enum Commands
         {
@@ -955,31 +1028,23 @@ namespace GitUI.Editor
             return (_internalFileViewer.GetText() != null && _internalFileViewer.GetText().Contains("@@"));
         }
 
-        public void SetFileLoader(Func<bool, Tuple<int, string>> fileLoader){
+        public void SetFileLoader(Func<bool, Tuple<int, string>> fileLoader)
+        {
             _internalFileViewer.SetFileLoader(fileLoader);
         }
 
         private void encodingToolStripComboBox_SelectedIndexChanged(object sender, EventArgs e)
         {
             Encoding encod = null;
+
             if (string.IsNullOrEmpty(encodingToolStripComboBox.Text))
                 encod = Module.FilesEncoding;
             else if (encodingToolStripComboBox.Text.StartsWith("Default", StringComparison.CurrentCultureIgnoreCase))
                 encod = Encoding.Default;
-            else if (encodingToolStripComboBox.Text.Equals("DOS852", StringComparison.CurrentCultureIgnoreCase))
-                encod = Encoding.GetEncoding("CP852");
-            else if (encodingToolStripComboBox.Text.Equals("ASCII", StringComparison.CurrentCultureIgnoreCase))
-                encod = new ASCIIEncoding();
-            else if (encodingToolStripComboBox.Text.Equals("Unicode", StringComparison.CurrentCultureIgnoreCase))
-                encod = new UnicodeEncoding();
-            else if (encodingToolStripComboBox.Text.Equals("UTF7", StringComparison.CurrentCultureIgnoreCase))
-                encod = new UTF7Encoding();
-            else if (encodingToolStripComboBox.Text.Equals("UTF8", StringComparison.CurrentCultureIgnoreCase))
-                encod = new UTF8Encoding(false);
-            else if (encodingToolStripComboBox.Text.Equals("UTF32", StringComparison.CurrentCultureIgnoreCase))
-                encod = new UTF32Encoding(true, false);
             else
-                encod = Module.FilesEncoding;
+                encod = AppSettings.AvailableEncodings.Values
+                      .Where(en => en.EncodingName == encodingToolStripComboBox.Text)
+                      .FirstOrDefault() ?? Module.FilesEncoding;
             if (!encod.Equals(this.Encoding))
             {
                 this.Encoding = encod;
@@ -1011,6 +1076,7 @@ namespace GitUI.Editor
         {
             string code = _internalFileViewer.GetSelectedText();
             bool noSelection = false;
+
             if (string.IsNullOrEmpty(code))
             {
                 code = _internalFileViewer.GetText();
@@ -1022,9 +1088,11 @@ namespace GitUI.Editor
                 //add artificail space if selected text is not starting from line begining, it will be removed later
                 int pos = noSelection ? 0 : _internalFileViewer.GetSelectionPosition();
                 string fileText = _internalFileViewer.GetText();
+
                 if (pos > 0)
                     if (fileText[pos - 1] != '\n')
                         code = " " + code;
+
                 IEnumerable<string> lines = code.Split('\n');
                 lines = lines.Where(s => s.Length == 0 || s[0] != startChar || (s.Length > 2 && s[1] == s[0] && s[2] == s[0]));
                 int hpos = fileText.IndexOf("\n@@");
@@ -1043,7 +1111,7 @@ namespace GitUI.Editor
 
         private string DoAutoCRLF(string s)
         {
-            if (Module.EffectiveConfigFile.core.autocrlf.Value == AutoCRLFType.@true)
+            if (Module.EffectiveConfigFile.core.autocrlf.ValueOrDefault == AutoCRLFType.@true)
             {
                 return s.Replace("\n", Environment.NewLine);
             }
@@ -1061,19 +1129,29 @@ namespace GitUI.Editor
             CopyNotStartingWith('+');
         }
 
-        private void cherrypickSelectedLines(int selectionStart, int selectionLength)
+        private void applySelectedLines(int selectionStart, int selectionLength, bool reverse)
         {
             // Prepare git command
             string args = "apply --3way --whitespace=nowarn";
 
             byte[] patch;
-            patch = PatchManager.GetSelectedLinesAsPatch(Module, GetText(),
+
+            if (reverse)
+            {
+                patch = PatchManager.GetResetUnstagedLinesAsPatch(Module, GetText(),
+                selectionStart, selectionLength,
+                false, Encoding);
+            }
+            else
+            {
+                patch = PatchManager.GetSelectedLinesAsPatch(Module, GetText(),
                 selectionStart, selectionLength,
                 false, Encoding, false);
-
+            }
             if (patch != null && patch.Length > 0)
             {
                 string output = Module.RunGitCmd(args, null, patch);
+
                 if (!string.IsNullOrEmpty(output))
                 {
                     if (!MergeConflictHandler.HandleMergeConflicts(UICommands, this, false, false))
@@ -1084,14 +1162,14 @@ namespace GitUI.Editor
 
         private void cherrypickSelectedLinesToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            cherrypickSelectedLines(GetSelectionPosition(), GetSelectionLength());
+            applySelectedLines(GetSelectionPosition(), GetSelectionLength(), reverse: false);
         }
 
         public void CherryPickAllChanges()
         {
             if (GetText().Length > 0)
             {
-                cherrypickSelectedLines(0, GetText().Length);
+                applySelectedLines(0, GetText().Length, reverse: false);
             }
         }
 
@@ -1107,8 +1185,31 @@ namespace GitUI.Editor
                 _async.Dispose();
                 if (components != null)
                     components.Dispose();
+                if (IsUICommandsInitialized)
+                {
+                    UICommands.PostSettings -= UICommands_PostSettings;
+                }
             }
             base.Dispose(disposing);
+        }
+
+        private void settingsButton_Click(object sender, EventArgs e)
+        {
+            UICommands.StartSettingsDialog(this.ParentForm, DiffViewerSettingsPage.GetPageReference());
+        }
+
+        private void revertSelectedLinesToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            applySelectedLines(GetSelectionPosition(), GetSelectionLength(), reverse: true);
+        }
+
+        private void ignoreAllWhitespaceChangesToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            var newIgnoreValue = !ignoreAllWhitespaces.Checked;
+            ignoreAllWhitespaces.Checked = newIgnoreValue;
+            ignoreAllWhitespaceChangesToolStripMenuItem.Checked = newIgnoreValue;
+            AppSettings.IgnoreAllWhitespaceChanges = newIgnoreValue;
+            OnExtraDiffArgumentsChanged();
         }
     }
 }

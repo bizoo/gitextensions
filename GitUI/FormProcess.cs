@@ -8,6 +8,7 @@ using GitCommands;
 using GitUI.UserControls;
 
 using ResourceManager;
+using System.Collections.Generic;
 
 namespace GitUI
 {
@@ -28,13 +29,14 @@ namespace GitUI
         public string ProcessInput { get; set; }
         public readonly string WorkingDirectory;
         public HandleOnExit HandleOnExitCallback { get; set; }
+        public readonly Dictionary<string, string> ProcessEnvVariables = new Dictionary<string, string>();
 
         protected FormProcess()
             : base(true)
         { }
 
-        protected FormProcess(string process, string arguments, string aWorkingDirectory, string input, bool useDialogSettings)
-            : base(useDialogSettings)
+        public FormProcess(ConsoleOutputControl outputControl, string process, string arguments, string aWorkingDirectory, string input, bool useDialogSettings)
+            : base(outputControl, useDialogSettings)
         {
             ProcessCallback = processStart;
             AbortCallback = processAbort;
@@ -47,6 +49,11 @@ namespace GitUI
 
             ConsoleOutput.ProcessExited += delegate { OnExit(ConsoleOutput.ExitCode); };
             ConsoleOutput.DataReceived += DataReceivedCore;
+        }
+
+        public FormProcess(string process, string arguments, string aWorkingDirectory, string input, bool useDialogSettings)
+            : this(null, process, arguments, aWorkingDirectory, input, useDialogSettings)
+        {
         }
 
         public static bool ShowDialog(IWin32Window owner, GitModule module, string arguments)
@@ -88,6 +95,17 @@ namespace GitUI
                 return !formProcess.ErrorOccurred();
             }
         }
+
+        public static bool ShowStandardProcessDialog(IWin32Window owner, string process, string arguments, string aWorkingDirectory, string input, bool useDialogSettings)
+        {
+            var outputCtrl = new EditboxBasedConsoleOutputControl();
+            using (var formProcess = new FormProcess(outputCtrl, process, arguments, aWorkingDirectory, input, useDialogSettings))
+            {
+                formProcess.ShowDialog(owner);
+                return !formProcess.ErrorOccurred();
+            }
+        }
+
 
         public static FormProcess ShowModeless(IWin32Window owner, string process, string arguments, string aWorkingDirectory, string input, bool useDialogSettings)
         {
@@ -133,11 +151,11 @@ namespace GitUI
 
             try
             {
-				ConsoleOutput.StartProcess(ProcessString, ProcessArguments, WorkingDirectory);
+                ConsoleOutput.StartProcess(ProcessString, ProcessArguments, WorkingDirectory, ProcessEnvVariables);
 
                 if (!string.IsNullOrEmpty(ProcessInput))
                 {
-					throw new NotSupportedException("No non-NULL usages of ProcessInput are currently expected.");	// Not implemented with all terminal variations, so let's postpone until there's at least one non-null case
+                    throw new NotSupportedException("No non-NULL usages of ProcessInput are currently expected.");	// Not implemented with all terminal variations, so let's postpone until there's at least one non-null case
 /*
                     Thread.Sleep(500);
                     Process.StandardInput.Write(ProcessInput);
@@ -154,17 +172,21 @@ namespace GitUI
 
         private void processAbort(FormStatus form)
         {
-			ConsoleOutput.KillProcess();
+            KillProcess();
         }
 
-        protected void KillGitCommand()
+        protected void KillProcess()
         {
             try
             {
                 ConsoleOutput.KillProcess();
+
+                var module = new GitModule(WorkingDirectory);
+                module.UnlockIndex(true);
             }
             catch
             {
+                // no-op
             }
         }
 
@@ -205,34 +227,34 @@ namespace GitUI
 
         }
 
-	    private void DataReceivedCore(object sender, TextEventArgs e)
-	    {
-		    if(e.Text.Contains("%") || e.Text.Contains("remote: Counting objects"))
-			    SetProgress(e.Text);
-		    else
-		    {
-			    const string ansiSuffix = "\u001B[K";
-			    string line = e.Text.Replace(ansiSuffix, "");
+        private void DataReceivedCore(object sender, TextEventArgs e)
+        {
+            if(e.Text.Contains("%") || e.Text.Contains("remote: Counting objects"))
+                SetProgress(e.Text);
+            else
+            {
+                const string ansiSuffix = "\u001B[K";
+                string line = e.Text.Replace(ansiSuffix, "");
 
-			    if(ConsoleOutput.IsDisplayingFullProcessOutput)
-				    OutputLog.Append(line); // To the log only, display control displays it by itself
-			    else
-				    AppendOutput(line); // Both to log and display control
-		    }
+                if(ConsoleOutput.IsDisplayingFullProcessOutput)
+                    OutputLog.Append(line); // To the log only, display control displays it by itself
+                else
+                    AppendOutput(line); // Both to log and display control
+            }
 
-		    DataReceived(sender, e);
-	    }
+            DataReceived(sender, e);
+        }
 
-		/// <summary>
-		/// Appends a line of text (CRLF added automatically) both to the logged output (<see cref="FormStatus.GetOutputString"/>) and to the display console control.
-		/// </summary>
+        /// <summary>
+        /// Appends a line of text (CRLF added automatically) both to the logged output (<see cref="FormStatus.GetOutputString"/>) and to the display console control.
+        /// </summary>
         public void AppendOutput(string line)
         {
-			// To the internal log (which can be then retrieved as full text from this form)
+            // To the internal log (which can be then retrieved as full text from this form)
             OutputLog.Append(line);
 
-			// To the display control
-            AddMessageLine(line);
+            // To the display control
+            AddMessage(line);
         }
 
         public static bool IsOperationAborted(string dialogResult)

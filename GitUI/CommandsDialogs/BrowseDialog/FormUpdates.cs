@@ -2,11 +2,13 @@
 using System.Diagnostics;
 using System.Linq;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Threading;
 using System.Windows.Forms;
 using Git.hub;
 using GitCommands.Config;
 using GitCommands;
+using GitUIPluginInterfaces;
 using ResourceManager;
 
 namespace GitUI.CommandsDialogs.BrowseDialog
@@ -74,9 +76,15 @@ namespace GitUI.CommandsDialogs.BrowseDialog
                     CheckForNewerVersion(releases.Blob.Value.GetContent());
                 }
             }
+            catch (InvalidAsynchronousStateException)
+            {
+                // InvalidAsynchronousStateException (The destination thread no longer exists) is thrown
+                // if a UI component gets disposed or the UI thread EXITs while a 'check for updates' thread
+                // is in the middle of its run... Ignore it, likely the user has closed the app
+            }
             catch (Exception ex)
             {
-                this.InvokeSync((state) =>
+                this.InvokeSync(state =>
                     {
                         if (Visible)
                         {
@@ -159,7 +167,7 @@ namespace GitUI.CommandsDialogs.BrowseDialog
         public ReleaseType ReleaseType;
         public string DownloadPage;
 
-        public static ReleaseVersion FromSection(ConfigSection section)
+        public static ReleaseVersion FromSection(IConfigSection section)
         {
             Version ver;
             try

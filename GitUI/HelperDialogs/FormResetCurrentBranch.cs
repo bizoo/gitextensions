@@ -11,12 +11,32 @@ namespace GitUI.HelperDialogs
         readonly TranslationString resetHardWarning = new TranslationString("You are about to discard ALL local changes, are you sure?");
         readonly TranslationString resetCaption = new TranslationString("Reset branch");
 
-        public FormResetCurrentBranch(GitUICommands aCommands, GitRevision Revision)
+        public enum ResetType
+        {
+            Soft,
+            Mixed,
+            Hard
+        }
+
+        public FormResetCurrentBranch(GitUICommands aCommands, GitRevision Revision, ResetType resetType = ResetType.Mixed)
             : base(aCommands)
         {
             this.Revision = Revision;
 
             InitializeComponent(); Translate();
+
+            switch (resetType)
+            {
+                case ResetType.Soft:
+                    Soft.Checked = true;
+                    break;
+                case ResetType.Mixed:
+                    Mixed.Checked = true;
+                    break;
+                case ResetType.Hard:
+                    Hard.Checked = true;
+                    break;
+            }
         }
 
         public GitRevision Revision { get; set; }
@@ -44,9 +64,14 @@ namespace GitUI.HelperDialogs
             {
                 if (MessageBox.Show(this, resetHardWarning.Text, resetCaption.Text, MessageBoxButtons.YesNo, MessageBoxIcon.Exclamation) == DialogResult.Yes)
                 {
-                    FormProcess.ShowDialog(this, GitCommandHelpers.ResetHardCmd(Revision.Guid));
-
-                    UICommands.UpdateSubmodules(this);
+                    var originalHash = Module.GetCurrentCheckout();
+                    if (FormProcess.ShowDialog(this, GitCommandHelpers.ResetHardCmd(Revision.Guid)))
+                    {
+                        if (!string.Equals(originalHash, Revision.Guid, StringComparison.OrdinalIgnoreCase))
+                        {
+                            UICommands.UpdateSubmodules(this);
+                        }
+                    }
                 }
                 else
                 {
@@ -55,11 +80,13 @@ namespace GitUI.HelperDialogs
             }
 
             UICommands.RepoChangedNotifier.Notify();
+            DialogResult = DialogResult.OK;
             Close();
         }
 
         private void Cancel_Click(object sender, EventArgs e)
         {
+            DialogResult = DialogResult.Cancel;
             Close();
         }
     }

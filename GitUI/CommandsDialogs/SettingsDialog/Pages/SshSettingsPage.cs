@@ -4,17 +4,21 @@ using System.IO;
 using GitCommands;
 using GitCommands.Utils;
 using Microsoft.Win32;
+using GitUI.Editor;
 
 namespace GitUI.CommandsDialogs.SettingsDialog.Pages
 {
     public partial class SshSettingsPage : SettingsPageWithHeader
     {
+        private readonly ISshPathLocator _sshPathLocator = new SshPathLocator();
 
         public SshSettingsPage()
         {
             InitializeComponent();
             Text = "SSH";
             Translate();
+
+            label18.ForeColor = ColorHelper.GetForeColorForBackColor(label18.BackColor);
         }
 
         protected override string GetCommaSeparatedKeywordList()
@@ -34,13 +38,14 @@ namespace GitUI.CommandsDialogs.SettingsDialog.Pages
             PageantPath.Text = AppSettings.Pageant;
             AutostartPageant.Checked = AppSettings.AutoStartPageant;
 
-            if (string.IsNullOrEmpty(GitCommandHelpers.GetSsh()))
+            var sshPath = _sshPathLocator.Find(AppSettings.GitBinDir);
+            if (string.IsNullOrEmpty(sshPath))
                 OpenSSH.Checked = true;
             else if (GitCommandHelpers.Plink())
                 Putty.Checked = true;
             else
             {
-                OtherSsh.Text = GitCommandHelpers.GetSsh();
+                OtherSsh.Text = sshPath;
                 Other.Checked = true;
             }
 

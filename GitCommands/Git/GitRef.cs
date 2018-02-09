@@ -1,15 +1,15 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using GitCommands.Config;
-using GitCommands.Settings;
+using GitUIPluginInterfaces;
 
 namespace GitCommands
 {
-    public class GitRef : IGitItem
+    public class GitRef : IGitRef
     {
         private readonly string _mergeSettingName;
         private readonly string _remoteSettingName;
-        private IList<IGitItem> _subItems;
        
         /// <summary>"refs/tags/"</summary>
         public static readonly string RefsTagsPrefix = "refs/tags/";
@@ -22,12 +22,12 @@ namespace GitCommands
         /// <summary>"^{}"</summary>
         public static readonly string TagDereferenceSuffix = "^{}";
        
-        public GitModule Module { get; private set; }
+        public IGitModule Module { get; private set; }
 
-        public GitRef(GitModule module, string guid, string completeName)
+        public GitRef(IGitModule module, string guid, string completeName)
             : this(module, guid, completeName, string.Empty) { }
 
-        public GitRef(GitModule module, string guid, string completeName, string remote)
+        public GitRef(IGitModule module, string guid, string completeName, string remote)
         {
             Module = module;
             Guid = guid;
@@ -101,7 +101,7 @@ namespace GitCommands
         /// <summary>Gets the setting name for a branch's remote.</summary>
         public static string RemoteSettingName(string branch)
         {
-            return String.Format("branch.{0}.remote", branch);
+            return String.Format(SettingKeyString.BranchRemote, branch);
         }
 
         /// <summary>
@@ -109,7 +109,7 @@ namespace GitCommands
         /// every time it is accessed. This method accepts a config file what makes it faster when loading
         /// the revision graph.
         /// </summary>
-        public string GetTrackingRemote(ConfigFileSettings configFile)
+        public string GetTrackingRemote(ISettingsValueGetter configFile)
         {
             return configFile.GetValue(_remoteSettingName);
         }
@@ -134,7 +134,7 @@ namespace GitCommands
         /// every time it is accessed. This method accepts a configfile what makes it faster when loading
         /// the revisiongraph.
         /// </summary>
-        public string GetMergeWith(ConfigFileSettings configFile)
+        public string GetMergeWith(ISettingsValueGetter configFile)
         {
             string merge = configFile.GetValue(_mergeSettingName);
             return merge.StartsWith(RefsHeadsPrefix) ? merge.Substring(11) : merge;
@@ -151,11 +151,6 @@ namespace GitCommands
         public string Guid { get; private set; }
         public string Name { get; private set; }
 
-        public IEnumerable<IGitItem> SubItems
-        {
-            get { return _subItems ?? (_subItems = Module.GetTree(Guid, false)); }
-        }
-
         #endregion
 
         public override string ToString()
@@ -168,7 +163,7 @@ namespace GitCommands
             if (IsRemote)
             {
                 Name = CompleteName.Substring(CompleteName.LastIndexOf("remotes/") + 8);
-            } 
+            }
             else if (IsTag)
             {
                 // we need the one containing ^{}, because it contains the reference
@@ -184,8 +179,23 @@ namespace GitCommands
                 Name = CompleteName.Substring(CompleteName.LastIndexOf("heads/") + 6);
             }
             else
+            {
                 //if we don't know ref type then we don't know if '/' is a valid ref character
                 Name = CompleteName.SkipStr("refs/");
+            }
+
+            if (Name.IsNullOrWhiteSpace())
+            {
+                Name = CompleteName;
+            }
+        }
+
+        public static ISet<string> GetAmbiguousRefNames(IEnumerable<IGitRef> refs)
+        {
+            return refs.
+                GroupBy(r => r.Name).
+                Where(group => group.Count() > 1).
+                ToHashSet(e => e.Key);
         }
     }
 }
